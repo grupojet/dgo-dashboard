@@ -1,0 +1,104 @@
+name: Build Equatorial GO KMZ
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - build_equatorial_kmz_stream.py
+      - .github/workflows/equatorial-go-kmz.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      SOURCE_URL: https://www.arcgis.com/sharing/rest/content/items/32ecb2c820a742bfbfa077af69c82245/data
+      TILE_SIZE: "0.25"
+      MAX_OPEN_FILES: "128"
+      MIN_LOD_PIXELS: "96"
+      TAG_NAME: equatorial-go-bdgd-2025-v1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Liberar espaço do runner
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h
+
+      - name: Instalar GDAL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gdal-bin python3-gdal unzip curl ca-certificates
+          ogrinfo --version
+          /usr/bin/python3 -c "from osgeo import ogr, osr; print('GDAL Python OK', ogr.GetDriverCount())"
+
+      - name: Baixar BDGD oficial da ANEEL
+        run: |
+          mkdir -p input output
+          curl --fail --location --retry 8 --retry-delay 10 --retry-all-errors \
+            --output input/equatorial_go.gdb.zip "$SOURCE_URL"
+          ls -lh input/equatorial_go.gdb.zip
+          test "$(stat -c%s input/equatorial_go.gdb.zip)" -gt 1000000000
+          sha256sum input/equatorial_go.gdb.zip | tee output/FONTE_SHA256.txt
+          df -h
+
+      - name: Descompactar File Geodatabase
+        run: |
+          unzip -q input/equatorial_go.gdb.zip -d input/extracted
+          GDB_PATH="$(find input/extracted -type d -name '*.gdb' -print -quit)"
+          test -n "$GDB_PATH"
+          echo "GDB_PATH=$GDB_PATH" >> "$GITHUB_ENV"
+          echo "Geodatabase: $GDB_PATH"
+          du -sh input/extracted "$GDB_PATH"
+          df -h
+
+      - name: Inventariar camadas
+        run: |
+          ogrinfo -ro "$GDB_PATH" > output/OGRINFO_CAMADAS.txt
+          sed -n '1,240p' output/OGRINFO_CAMADAS.txt
+          for layer in PONNOT SSDBT SSDMT SSDAT; do
+            ogrinfo -ro -so "$GDB_PATH" "$layer" > "output/OGRINFO_${layer}.txt" 2>&1 || true
+          done
+
+      - name: Gerar KMZ otimizado para telecom
+        run: |
+          /usr/bin/python3 build_equatorial_kmz_stream.py "$GDB_PATH" output
+          ls -lh output
+          df -h
+
+      - name: Validar KMZ
+        run: |
+          KMZ=output/EQUATORIAL_GO_POSTEAMENTO_REDES_TELECOM_2025.kmz
+          test -s "$KMZ"
+          unzip -t "$KMZ" > output/VALIDACAO_KMZ.txt
+          unzip -l "$KMZ" | sed -n '1,40p'
+          sha256sum "$KMZ" | tee output/EQUATORIAL_GO_KMZ_SHA256.txt
+          stat -c 'KMZ_BYTES=%s' "$KMZ" | tee -a output/EQUATORIAL_GO_KMZ_SHA256.txt
+
+      - name: Publicar resultado em release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "$TAG_NAME" --yes --cleanup-tag || true
+          gh release create "$TAG_NAME" output/* \
+            --title "Equatorial GO - Posteamento e Redes para Telecom - BDGD 2025" \
+            --notes "Conversão da BDGD oficial ANEEL/Equatorial Goiás, posição 31/12/2025. Inclui postes e redes BT, MT e AT, em mosaicos otimizados para Google Earth. A presença de infraestrutura não confirma vaga técnica para telecom."
+          gh release view "$TAG_NAME" --json url,assets
+
+      - name: Preservar diagnósticos como artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: equatorial-go-diagnosticos
+          path: |
+            output/*.txt
+            output/*.csv
+            output/*.json
+          if-no-files-found: warn
+          retention-days: 14
