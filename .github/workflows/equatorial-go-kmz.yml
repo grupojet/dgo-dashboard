@@ -6,6 +6,8 @@ on:
     paths:
       - build_equatorial_kmz_stream.py
       - .github/workflows/equatorial-go-kmz.yml
+  issues:
+    types: [opened]
   workflow_dispatch:
 
 permissions:
