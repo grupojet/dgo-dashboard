@@ -1,0 +1,34 @@
+name: Package Equatorial GO KMZ Artifact
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/package-equatorial-kmz.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Baixar KMZ validado da release
+        run: |
+          mkdir -p package
+          curl --fail --location --retry 8 --retry-delay 5 --retry-all-errors \
+            --output package/EQUATORIAL_GO_POSTEAMENTO_REDES_TELECOM_2025.kmz \
+            https://github.com/grupojet/dgo-dashboard/releases/download/equatorial-go-bdgd-2025-v1/EQUATORIAL_GO_POSTEAMENTO_REDES_TELECOM_2025.kmz
+          test "$(stat -c%s package/EQUATORIAL_GO_POSTEAMENTO_REDES_TELECOM_2025.kmz)" -eq 159592931
+          unzip -t package/EQUATORIAL_GO_POSTEAMENTO_REDES_TELECOM_2025.kmz > package/VALIDACAO_KMZ.txt
+          sha256sum package/EQUATORIAL_GO_POSTEAMENTO_REDES_TELECOM_2025.kmz > package/SHA256.txt
+
+      - name: Disponibilizar KMZ como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: equatorial-go-kmz-final
+          path: package/EQUATORIAL_GO_POSTEAMENTO_REDES_TELECOM_2025.kmz
+          compression-level: 0
+          retention-days: 14
