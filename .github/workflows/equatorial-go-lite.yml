@@ -1,0 +1,69 @@
+name: Build Equatorial GO Lite
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - build_equatorial_lite_release.py
+      - .github/workflows/equatorial-go-lite.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build-lite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SOURCE_TAG: equatorial-go-bdgd-2025-v1
+      LITE_TAG: equatorial-go-bdgd-2025-lite
+      SOURCE_FILE: EQUATORIAL_GO_POSTEAMENTO_REDES_TELECOM_2025.kmz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Baixar KMZ estadual validado
+        run: |
+          mkdir -p source output
+          curl --fail --location --retry 8 --retry-all-errors \
+            -o "$SOURCE_FILE" \
+            "https://github.com/${{ github.repository }}/releases/download/$SOURCE_TAG/$SOURCE_FILE"
+          unzip -q "$SOURCE_FILE" -d source
+          mkdir -p source/icons
+          echo 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAjUlEQVR4nNVTyxWAMAirfY6F4ziV48heeqKvpQSqHtTc2kD4p/R1TB5JRIf1z8zQL18Vi7gukjbeN274ZaXmrbOdUSQtpP+1sKApWbJDYpawrqgIen2JUPt2QxnJzrOFU76LHwqidbBg2RZB75wi1L7ZIkayFJvhSxGH6PQ0YJnRoqMWwSl7PX3S7/dxAgVUPCJUb7EqAAAAAElFTkSuQmCC' | base64 -d > source/icons/poste_equatorial.png
+
+      - name: Gerar índice e pacotes regionais
+        run: |
+          python3 build_equatorial_lite_release.py source output
+          ls -lh output/EQUATORIAL_GO_TELECOM_LITE_ONLINE.kmz output/regions/*.kmz
+
+      - name: Validar todos os KMZ
+        run: |
+          unzip -tqq output/EQUATORIAL_GO_TELECOM_LITE_ONLINE.kmz
+          for file in output/regions/*.kmz; do unzip -tqq "$file"; done
+          sha256sum output/EQUATORIAL_GO_TELECOM_LITE_ONLINE.kmz > output/SHA256_LITE.txt
+
+      - name: Publicar release online leve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "$LITE_TAG" --yes --cleanup-tag || true
+          gh release create "$LITE_TAG" \
+            output/EQUATORIAL_GO_TELECOM_LITE_ONLINE.kmz \
+            output/REGIOES_LITE.csv \
+            output/SHA256_LITE.txt \
+            output/regions/*.kmz \
+            --title "Equatorial GO Telecom - versão LITE online" \
+            --notes "Índice inicial de poucos KB. O Google Earth baixa somente o pacote regional necessário conforme a aproximação. Requer internet. Fonte: BDGD ANEEL/Equatorial GO, posição 31/12/2025."
+
+      - name: Disponibilizar arquivo inicial
+        uses: actions/upload-artifact@v4
+        with:
+          name: equatorial-go-lite-online
+          path: |
+            output/EQUATORIAL_GO_TELECOM_LITE_ONLINE.kmz
+            output/REGIOES_LITE.csv
+            output/SHA256_LITE.txt
+          retention-days: 30
